@@ -1,0 +1,279 @@
+//------------------------------------------------------------------------
+// Jason Colman Feb 2016
+// Fish simulator 2016
+//------------------------------------------------------------------------
+
+#define PI 3.141592653589793
+
+// Initial value of t in ray equation p0 + t (p1 - p0)
+#define START_T 0.001
+
+// Once ray reaches this length, it won't hit anything in 
+//  the scene.
+#define TOO_FAR 10.0
+
+// If distance from point to a surface is <= this, we are 
+//  close enough to say we have hit it.
+#define CLOSE_ENOUGH 0.01
+
+// Max number of iterations in ray marching loop, will be
+//  interesting to find realistic value for this. Depends on
+//  number of objects in scene, no?
+// From a quick experiment, more than 100 makes no difference
+//  visually, for this example.
+#define MAX_ITERS 200
+
+#define LIGHT_DIR normalize(vec3(1.0, 0.8, 0.1))
+
+#define SPEED 1.0
+
+#define SMOOTH 0.1
+#define TAILW 0.07 * .3
+#define SCALE_SIZE 40.
+
+#define MAT_FISH  0
+#define MAT_EYE   1
+#define MAT_PUPIL 2
+
+//------------------------------------------------------------------------
+// From http://iquilezles.org/www/articles/smin/smin.htm	
+// polynomial smooth min (k = 0.1);
+float smin( float a, float b, float k )
+{
+    float h = clamp( 0.5+0.5*(b-a)/k, 0.0, 1.0 );
+    return mix( b, a, h ) - k*h*(1.0-h);
+}
+
+//------------------------------------------------------------------------
+float sdEllipsoid( in vec3 p, in vec3 r )
+{
+    return (length( p/r ) - 1.0) * min(min(r.x,r.y),r.z);
+}
+
+//------------------------------------------------------------------------
+float fishDist(vec3 pos)
+{
+    // Wriggle
+    float s = sin(iGlobalTime * 8. + pos.x);    
+    pos.z += s * .3;
+    
+    float bfin = max(
+        sdEllipsoid(pos + vec3(0.2, .4, 0), vec3(.3, 0.25, TAILW)),
+        sdEllipsoid(pos + vec3(0.1, .7, 0), vec3(.3, 0.3, 0.5)) );
+
+    float tfin = max(
+        sdEllipsoid(pos + vec3(-.3, -.75, 0), vec3(.5, 0.3, TAILW)),
+        sdEllipsoid(pos + vec3(0.1, -.65, 0), vec3(.4, 0.4, 0.5)) );
+    
+    float tail = max(
+        sdEllipsoid(pos + vec3(1.2, -0.55, 0), vec3(.6, 0.4, TAILW)),
+        sdEllipsoid(pos + vec3(1.5, -0.35, 0), vec3(.6, 0.45, 0.5)) );
+        
+    // Bottom tail
+//    tail = min(tail, max(
+//        sdEllipsoid(pos + vec3(1.2, 0.55, 0), vec3(.6, 0.4, TAILW)),
+//        sdEllipsoid(pos + vec3(1.5, 0.35, 0), vec3(.6, 0.45, 0.5))));
+        
+    float body = sdEllipsoid(pos + vec3(.1, 0, 0), vec3(.9, 0.4, 0.2));
+    
+    // Head
+    body = min(body,
+        sdEllipsoid(pos + vec3(-.5, 0, 0), vec3(.45, 0.3, 0.22)));
+               
+    // Mouth
+    body = max(body, 
+        -sdEllipsoid(pos + vec3(-1., .1, 0), vec3(2., 0.1, 0.13)));
+
+    // No fins
+    return smin(tail, body, SMOOTH);
+    
+    return smin(tail, smin(min(bfin, tfin), body, SMOOTH), SMOOTH);    
+}
+
+//------------------------------------------------------------------------
+vec3 rotateY(vec3 pos, float theta)
+{
+    float s = sin(theta);
+    float c = cos(theta);
+    return vec3(pos.x * c - pos.z * s, pos.y, pos.z * c + pos.x * s);
+}
+
+//------------------------------------------------------------------------
+vec3 fishpos(vec3 pos)
+{
+    float d = 4.;
+    //fpos.y += sin(iGlobalTime);
+    
+    pos.x += d * -sin(iGlobalTime);
+    pos.z += d * cos(iGlobalTime);
+
+    vec3 fpos = rotateY(pos, -iGlobalTime);   
+    return fpos;
+}
+
+//------------------------------------------------------------------------
+vec2 calcDist(vec3 pos)
+{
+    // Move fish around
+    
+    vec3 fpos = fishpos(pos);
+    float d = fishDist(fpos);
+    
+    //float d2 = fishDist(fpos + vec3(1., 1., 1.));
+    return vec2(d, 0);
+}
+
+//------------------------------------------------------------------------
+vec3 calcNormalAtPoint(vec3 pos) 
+{
+    float d = 0.001;
+    vec2 u = vec2(1.0, 0.0);
+    return normalize(
+        vec3(
+            calcDist(pos + u.xyy * d).x - calcDist(pos - u.xyy * d).x,
+            calcDist(pos + u.yxy * d).x - calcDist(pos - u.yxy * d).x,
+            calcDist(pos + u.yyx * d).x - calcDist(pos - u.yyx * d).x
+        )
+    );
+}
+
+//------------------------------------------------------------------------
+vec3 render(vec3 eyePos, vec3 rayDir)
+{
+    vec3 bg = vec3(0.1, 0.2, 0.2);
+    
+    // t is distance along ray so far 
+    float t = START_T;
+    
+    vec2 distMat = vec2(0.0, 0.0);
+    
+    // Repeatedly find the closest distance to an object in the
+    //  scene, and add this to t. 
+    for( int i = 0; i < MAX_ITERS; i++ ) 
+    {
+        // Distance to closest object and its material ID
+        distMat = calcDist(eyePos + rayDir * t);
+        float dist = distMat.x; // x-component is the distance
+
+        if (dist > TOO_FAR)
+            return bg; // ray has hit nothing, and never will 
+        
+        if (dist <= CLOSE_ENOUGH)
+            break; // ray has hit something
+
+        t += dist * 0.9; // advance by this distance and keep marching
+    }
+
+    // Final pos, which is on surface of an object in the scene
+    vec3 pos = eyePos + rayDir * t;    
+    vec3 fpos = fishpos(pos);
+    
+    vec3 normal = calcNormalAtPoint(pos);
+    
+    // Calc diffuse lighting, and add a constant for ambient
+    float nDotL = min(max(0., dot(normal, LIGHT_DIR)) + 0.5, 1.0);
+
+    // Create red/white colour bands
+    float s = sin((fpos.x - .5) * 2.);
+    float c = cos(fpos.y * 1.);
+    float r =  c * c + s * s;
+    s = s * .5 + .5;
+    c = c * .5 + .5;
+    vec3 col = vec3(c, c * s, c * r * s * s); 
+    // Shows basic colours
+    //return col;
+    
+    s = sin(fpos.x * SCALE_SIZE);
+    c = cos(fpos.y * SCALE_SIZE);
+    r = (s + c) * .7;
+    r *= r; 
+    // Basic scales pattern
+    //return vec3(r);  
+    
+    s = clamp(0., 1., sin(fpos.z * 13.));
+    c = clamp(0., 1., cos(iGlobalTime * fpos.y * 11. + fpos.z * 2.));
+
+    //return vec3(s + c); // show mask
+    r *= (s + c);
+
+    // Basic scales pattern modulated by larger scrolling pattern,
+    //  giving shimmering effect
+    //return vec3(r);
+
+    // Just apply to the top half of the fish
+    r *= smoothstep(-.1, 1., fpos.y);
+    
+    // Make sure r is in range 0..1
+    r = clamp(r, 0., 1.);
+    //return vec3(r);
+
+    // Final colour is combination of colour bands and shimmering
+    //  scales effect
+    return vec3(nDotL * col ) + r * nDotL;
+}
+
+//------------------------------------------------------------------------
+// camera matrix
+mat3 getCameraMatrix( vec3 camFow ) 
+{
+    vec3 forward = normalize( camFow );
+    vec3 up = normalize( vec3( 0.0, 0., 1.0 ) );
+    vec3 right = normalize( cross( up, forward ) );
+    
+    mat3 mat = mat3( right, up, forward );
+        
+    return mat;
+}
+
+//------------------------------------------------------------------------
+float lilypad(vec2 uv)
+{
+    float t = iGlobalTime * 0.004;
+    vec2 lilypos = 0.6 * vec2(cos(t), sin(t)); 
+    vec2 d = vec2(uv - lilypos);
+    float dist = dot(d, d);
+    if (atan(d.x, d.y) + dist * 1.9 > 2.6)
+        return 999.;
+    if (dist > 0.03)
+        dist += sin(atan(d.x, d.y) * 80.) * 0.001;
+    return dist;
+}
+
+//------------------------------------------------------------------------
+// Main function
+void mainImage(out vec4 fragColor, in vec2 fragCoord)
+{
+    // Get this pixel coord in range (-1..1)
+	vec2 uv = fragCoord.xy / iResolution.xy;
+    uv = uv * 2.0 - 1.0;
+
+    // Rotate camera in time with track curve, so we look at train
+    float deltaRot = -10.;//iMouse.x * 0.1; //iGlobalTime; //PI - sin(iGlobalTime * 1.05) * PI;
+
+    float D = 2.0;
+    float y = 12.0; //iMouse.y + 1.0; //cos(iGlobalTime * 0.2) + 2.0;
+    float z = -1.0; //iGlobalTime * SPEED;
+//    vec3 camPos = vec3( -D * cos(deltaRot), y, z + -D * sin(deltaRot) );
+    vec3 camPos = vec3(0, y, 0);
+//    vec3 camFow = vec3( 1.0 * cos(deltaRot), -40.0, 1.0 * sin(deltaRot) );
+    vec3 camFow = vec3(0, -1.0, 0);
+    mat3 camMat = getCameraMatrix( camFow );
+    
+    float viewRatio = iResolution.y / iResolution.x;
+    uv.y *= viewRatio;
+
+    vec3 rayDir = camMat * normalize( vec3( uv, viewRatio * 1.5 ) );
+    
+    // Get colour for pixel
+    vec3 colour = render(camPos, rayDir);
+    
+    float d = lilypad(uv);
+    if (d < .04)
+    {
+        colour = 0.7 * vec3(d * 20., .7, .25);
+    }
+    
+    fragColor = vec4(colour, 1.0);
+}
+
+

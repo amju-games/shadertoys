@@ -1,0 +1,470 @@
+//------------------------------------------------------------------------
+// Jason Colman Jan 2016
+// "brioche"
+// Infinite "Brio" train set
+//------------------------------------------------------------------------
+
+/*
+Thanks for useful info:
+http://www.geeks3d.com/20130524/building-worlds-with-distance-functions-in-glsl-raymarching-glslhacker-tutorial-opengl/
+http://www.pouet.net/topic.php?which=7931&page=1
+
+Bits of this code are copied or adapted from the many excellent
+ examples on shadertoy. These ones particularly:
+
+Very well-commented example of sphere:
+https://www.shadertoy.com/view/XtXGzM
+
+Also I found these useful:
+https://www.shadertoy.com/view/llfXRf
+https://www.shadertoy.com/view/MsX3WN
+*/
+
+#define PI 3.141592653589793
+
+// Initial value of t in ray equation p0 + t (p1 - p0)
+// You need it to be non-zero so your ray has a direction, 
+//  but short enough so it will not intersect anything at 
+//  first.
+#define START_T 0.001
+
+// Once ray reaches this length, it won't hit anything in 
+//  the scene.
+#define TOO_FAR 100.0
+
+// If distance from point to a surface is <= this, we are 
+//  close enough to say we have hit it.
+#define CLOSE_ENOUGH 0.0001
+
+// Max number of iterations in ray marching loop, will be
+//  interesting to find realistic value for this. Depends on
+//  number of objects in scene, no?
+// From a quick experiment, more than 100 makes no difference
+//  visually, for this example.
+#define MAX_ITERS 50
+
+#define SPEED 2.0 
+
+// Colour constants 
+#define SKY_COLOUR vec3(0.0, 0.5, 1.0)
+#define WOOD_COLOUR vec3(0.6, 0.6, 0.1)
+#define FLOOR_COLOUR vec3(0.0, 1.0, 0.0)
+#define WHEEL_COLOUR vec3(0.2, 0.2, 0.2)
+
+#define MAT_FLOOR 0
+#define MAT_TRACK 1
+#define MAT_WHEEL 2
+#define MAT_SHINY 3
+#define MAT_TRAIN 10
+
+#define NUM_TRAIN 1
+
+#define TRACK_PIECE_LEN 200.6
+#define TRACK_PIECE_WIDTH 0.2
+#define TRACK_PIECE_HEIGHT 0.1
+#define TRAIN_ABOVE_TRACK 0.25
+#define WHEEL_HEIGHT   TRAIN_ABOVE_TRACK * 1.2
+#define TRAIN_WIDTH 0.13
+#define TRAIN_HEIGHT 0.2
+#define TRAIN_LEN 0.4
+
+// Non-moveable camera, with this y-pos.
+#define CAM_HEIGHT 1.5
+
+#define LIGHT_DIR normalize(vec3(1.0, 0.8, 0.1))
+
+//------------------------------------------------------------------------
+// Standard distance to sphere function
+float distSphere(in vec3 pos, float radius) 
+{
+    return length(pos) - radius;
+}
+
+//------------------------------------------------------------------------
+// Box
+// From:
+// http://iquilezles.org/www/articles/distfunctions/distfunctions.htm
+float sdBox(in vec3 p, in vec3 b)
+{
+    vec3 d = abs(p) - b;
+    return min(max(d.x,max(d.y,d.z)),0.0) +
+         length(max(d,0.0));
+}
+
+//------------------------------------------------------------------------
+// Cylinder
+// From:
+// http://iquilezles.org/www/articles/distfunctions/distfunctions.htm
+float sdCylinder(vec3 p, vec3 c)
+{
+  return length(p.xz-c.xy)-c.z;
+}
+
+float sdCappedCylinder( vec3 p, vec2 h )
+{
+  vec2 d = abs(vec2(length(p.xz),p.y)) - h;
+  return min(max(d.x,d.y),0.0) + length(max(d,0.0));
+}
+
+//------------------------------------------------------------------------
+// Rounded box
+// From:
+// http://iquilezles.org/www/articles/distfunctions/distfunctions.htm
+float udRoundBox(in vec3 p, in vec3 b, float r)
+{
+  return length(max(abs(p)-b,0.0))-r;
+}
+
+//------------------------------------------------------------------------
+// Difference between two objects... maybe not use this
+float subtract(float a, float b)
+{
+    return max(a, -b);
+}
+
+//------------------------------------------------------------------------
+// Combine distance functions to give distance to a straight piece of 
+//  track
+float trackPiece1(in vec3 pos)
+{
+//    pos.y *= 2.0;
+    float mainBlock = sdBox(pos + vec3(0, -TRACK_PIECE_HEIGHT, 0), vec3(TRACK_PIECE_WIDTH, TRACK_PIECE_HEIGHT, TRACK_PIECE_LEN)); 
+    float groove1 = sdBox(pos + vec3(-0.15, -2.0 * TRACK_PIECE_HEIGHT, 0), vec3(0.02, TRACK_PIECE_HEIGHT * 0.75, TRACK_PIECE_LEN * 1.5));
+    float groove2 = sdBox(pos + vec3( 0.15, -2.0 * TRACK_PIECE_HEIGHT, 0), vec3(0.02, TRACK_PIECE_HEIGHT * 0.75, TRACK_PIECE_LEN * 1.5));
+
+//    float peg = sdCappedCylinder(pos + vec3(0.0, -0.5, -TRACK_PIECE_LEN -0.05), vec2(0.1, 0.2));
+
+//    float hole = sdCappedCylinder(pos + vec3(0.0, -0.5, TRACK_PIECE_LEN), vec2(0.11, 0.4));
+
+    float grooveBlock = subtract(subtract(mainBlock, groove1), groove2);
+    //grooveBlock = max(grooveBlock, -hole);
+    //return min(peg, grooveBlock);
+    return grooveBlock;
+}
+
+//------------------------------------------------------------------------
+float trackPieceCurved(in vec3 pos, float curveDir)
+{
+    float theta = curveDir * (pos.z + TRACK_PIECE_LEN) * TRACK_PIECE_LEN;
+    float s = sin(theta);
+    float c = cos(theta);
+    vec3 rotated = vec3(pos.x * c - pos.z * s, pos.y, pos.z * c + pos.x * s);
+    return trackPiece1(rotated);
+}
+
+//------------------------------------------------------------------------
+float trackPieceCurveL(in vec3 pos)
+{
+    return trackPieceCurved(pos, 1.0);
+}
+
+//------------------------------------------------------------------------
+float trackPiece3(in vec3 pos)
+{
+    // X-shaped piece - not correct, grooves are blocked.
+    float d1 = trackPiece1(pos);
+    // Rotate 90 degs
+    vec3 rot = vec3(-pos.z, pos.y, pos.x);
+    float d2 = trackPiece1(rot);
+    return min(d1, d2);
+}
+
+//------------------------------------------------------------------------
+float train1(in vec3 pos)
+{
+    float mainBlock = sdBox(pos + vec3(0, -TRAIN_HEIGHT - TRAIN_ABOVE_TRACK, 0), vec3(TRAIN_WIDTH, TRAIN_HEIGHT, TRAIN_LEN)); 
+    return mainBlock;
+}
+
+//------------------------------------------------------------------------
+float wheel1(in vec3 pos, float f)
+{
+    vec3 p = pos + vec3(0.0, -WHEEL_HEIGHT, 0.0);
+    vec3 p2 = vec3(p.y, p.x, p.z); 
+    float d = sdCappedCylinder(p2 + vec3(0.0, f, 0.0), vec2(0.1, 0.025));
+    d = min(d, sdCappedCylinder(p2 + vec3(0.0, -0.05, 0.0), vec2(0.15, 0.01)));
+    return d;
+}
+
+float wheels(in vec3 pos)
+{
+    float f = sin(iGlobalTime * 10.0) * 0.005;
+    return min(wheel1(pos + vec3( 0.2,  f,  0.2), -0.02), 
+           min(wheel1(pos + vec3( 0.2, -f, -0.2), -0.02),
+           min(wheel1(pos + vec3(-0.1,  f, -0.2), -0.08),
+               wheel1(pos + vec3(-0.1, -f,  0.2), -0.08))));
+}
+
+float shiny1(in vec3 p)
+{
+    p.x *= 2.0; // squashed spheroid
+    float d = distSphere(p, 0.05);
+    return d;
+}
+
+float shiny(in vec3 pos)
+{    
+    return min(shiny1(pos + vec3( 0.2, -WHEEL_HEIGHT,  0.2)),
+           min(shiny1(pos + vec3(-0.2, -WHEEL_HEIGHT,  0.2)),
+           min(shiny1(pos + vec3(-0.2, -WHEEL_HEIGHT, -0.2)),
+               shiny1(pos + vec3( 0.2, -WHEEL_HEIGHT, -0.2)))));
+}
+
+//------------------------------------------------------------------------
+// Return shortest distance from pos to an object in the scene.
+// Return type is a { distance, material ID } pair
+vec2 calcDist(in vec3 pos) 
+{
+    pos.z -= iGlobalTime * SPEED;
+    
+    float theta = sin(pos.z * 0.05 + iGlobalTime * 0.05) * 0.5;
+    //pos.x += theta * 4.0;
+    
+    float s = sin(theta);
+    float c = cos(theta);
+    //vec3 rpos = vec3(pos.x * c - pos.z * s, pos.y, pos.z * c + pos.x * s);
+
+    pos = pos + vec3(100.0 * c - 95.0, 0.0, 0.0);
+    
+    //rpos.z -= iGlobalTime;
+    
+    int material = MAT_FLOOR;
+        
+    // Distance to floor
+    //float y = 6.0 * clamp((sin(pos.z * 0.1) * sin(pos.x * 0.1)), -1.0, 0.0);
+    float dist = pos.y;// - y; //pos.y - 0.05; 
+    
+    // Test: a track piece
+    float dist1 = trackPiece1(pos);
+    //float dist1 = sdCappedCylinder(pos, vec2(0.1, 0.6));
+    // sphere
+    //float dist1 = 
+    //   distSphere(pos - vec3(-0.2, 1.25 + 1.3 * sin( iGlobalTime * 3.5 ), -0.3 ), SPHERE_RADIUS);
+    
+    if (dist1 < dist)
+    {
+        dist = dist1;
+        material = MAT_TRACK;
+    }
+    
+    for (int i = 0; i < NUM_TRAIN; i++)
+    {
+        float f = sin(iGlobalTime * float(i + 3) * 2.0) * 0.005;
+
+        if (i == 0)
+        {
+            // Engine
+            float dist2 = sdBox(pos + vec3(0, -TRAIN_HEIGHT * 0.4 - TRAIN_ABOVE_TRACK, 0), 
+                      vec3(TRAIN_WIDTH, TRAIN_HEIGHT * 0.4, TRAIN_LEN)); 
+
+            dist2 = min(dist2, sdCappedCylinder(pos + vec3(0, -TRAIN_HEIGHT * 3.0, -0.2), vec2(0.06, 0.2)));
+            if (dist2 < dist)
+            {
+                dist = dist2;
+                material = MAT_WHEEL;
+            }
+            
+            vec3 p = pos + vec3(0, -TRAIN_HEIGHT * 2.5, 0);
+            p = vec3(p.y, p.z, p.x);
+            float dist3 = sdCappedCylinder(p, vec2(0.14, 0.35));
+            dist3 = min(dist3, sdBox(p + vec3(-0.1, 0.23, 0), vec3(0.2, 0.15, 0.15))); 
+
+            if (dist3 < dist)
+            {
+                dist = dist3;
+                material = MAT_TRAIN;
+            }
+            
+        }
+        else
+        {
+            // Trucks
+            float dist2 = train1(pos + vec3(0, f, 0));
+            if (dist2 < dist)
+            {
+                dist = dist2;
+                material = MAT_TRAIN + i;
+            }
+        }
+
+        float dist3 = wheels(pos);
+        if (dist3 < dist)
+        {
+            dist = dist3;
+            material = MAT_WHEEL;
+        }
+    
+        float dist4 = shiny(pos);
+        if (dist4 < dist)
+        {
+            dist = dist4;
+            material = MAT_SHINY;
+        }
+        pos += vec3(0.0, 0.0, 1.0);
+    }
+    
+    return vec2(dist, material);
+}
+
+//------------------------------------------------------------------------
+vec3 calcNormalAtPoint(vec3 pos) 
+{
+    float d = 0.001;
+    vec2 u = vec2(1.0, 0.0);
+    return normalize(
+        vec3(
+            calcDist(pos + u.xyy * d).x - calcDist(pos - u.xyy * d).x,
+            calcDist(pos + u.yxy * d).x - calcDist(pos - u.yxy * d).x,
+            calcDist(pos + u.yyx * d).x - calcDist(pos - u.yyx * d).x
+        )
+    );
+}
+
+float mod2(int i)
+{
+    float f = float(i);
+    return 2.0 * (f / 2.0 - floor(f / 2.0));
+}
+
+//------------------------------------------------------------------------
+vec3 calcColour(in vec3 pos, in vec3 rayDir, int material)
+{
+    if (material == 0)
+    {
+        float stripe = clamp(sin(pos.z * 0.5) * 100.0, 0.0, 1.0) * 0.125 + 0.625;
+        stripe += clamp(sin(pos.x * 0.5) * 100.0, 0.0, 1.0) * 0.125;
+        return FLOOR_COLOUR * stripe;
+    }
+
+    vec3 normal = calcNormalAtPoint(pos);
+    
+    // Calc diffuse lighting, and add a constant for ambient
+    float nDotL = min(max(0.0, dot(normal, LIGHT_DIR)) + 0.5, 1.0);
+        
+    // Calc specular
+    float spec = clamp(
+        dot( reflect( -LIGHT_DIR, normal ), -rayDir ),
+        0.0, 1.0 );
+    
+    if (material == MAT_TRACK)
+    {
+        float stripe = (sin((pos.x + cos(pos.z * 4.0) + cos(pos.y * 5.0)) * 40.0) + 1.0) * 0.125 + 0.75;
+        return WOOD_COLOUR * stripe * nDotL + vec3(spec);
+    }
+    
+    if (material >= MAT_TRAIN)
+    {
+        int i = material - MAT_TRAIN + 1;
+        int i1 = int(mod2(i));
+        int i2 = int(mod2(i / 2));
+        int i3 = int(mod2(i / 4));
+        return vec3(float(i1), float(i2), float(i3)) * nDotL;
+    }
+    
+    if (material == MAT_WHEEL)
+        return WHEEL_COLOUR * nDotL;
+
+    
+    return vec3(spec + nDotL);
+    
+//    vec3 col = SKY_COLOUR;
+//    if (normal.y < 0.0)
+//        col = FLOOR_COLOUR;
+//    return col * 0.5 + 0.5 * vec3(clamp(nDotL * 1.0, 0.0, 1.0));
+}
+
+//------------------------------------------------------------------------
+// Raymarch until we hit something, or we realise we will find nothing.
+// Return colour of pixel.
+vec3 render(in vec3 eyePos, in vec3 rayDir)
+{
+    // t is distance along ray so far 
+    float t = START_T;
+    
+    vec2 distMat = vec2(0.0, 0.0);
+    
+    // Repeatedly find the closest distance to an object in the
+    //  scene, and add this to t. 
+    for( int i = 0; i < MAX_ITERS; i++ ) 
+    {
+        // Distance to closest object and its material ID
+        distMat = calcDist(eyePos + rayDir * t);
+        float dist = distMat.x; // x-component is the distance
+        
+        if (dist > TOO_FAR)
+            return SKY_COLOUR; // ray has hit nothing, and never will 
+        
+        if (dist <= CLOSE_ENOUGH)
+            break; // ray has hit something
+
+        t += dist * 0.8; // advance by this distance and keep marching
+    }
+
+    // Final pos, which is on surface of an object in the scene
+    vec3 pos = eyePos + rayDir * t;    
+    
+    // Now we could use pos to get the normal, then do some 
+    //  lighting etc.
+    int material = int(distMat.y);
+    
+    // Shiny TODO
+    //if (material == 4)
+    //{
+    //    return vec3(1.0); 
+    //}
+    
+    return calcColour(pos, rayDir, material);    
+}
+
+//------------------------------------------------------------------------
+// camera matrix
+mat3 getCameraMatrix( vec3 camFow ) 
+{
+    vec3 forward = normalize( camFow );
+    vec3 up = normalize( vec3( 0.0, 1.0, 0.0 ) );
+    vec3 right = normalize( cross( up, forward ) );
+    
+    mat3 mat = mat3( right, up, forward );
+        
+    return mat;
+}
+
+//------------------------------------------------------------------------
+// Main function
+void mainImage(out vec4 fragColor, in vec2 fragCoord)
+{
+    // Get this pixel coord in range (-1..1)
+	vec2 uv = fragCoord.xy / iResolution.xy;
+    uv = uv * 2.0 - 1.0;
+    
+    // Eye position/ray origin
+    //float z = 0.0; //sin(iGlobalTime * 0.8) * 2.0;
+    //vec3 rayOrigin = vec3(0.0, CAM_HEIGHT + 0.5 * sin(iGlobalTime * 0.8), 2.0 + z);
+    //float s = sin(iGlobalTime);
+    //float c = cos(iGlobalTime);
+    //vec3 rayOrigin = vec3(c * 2.0, CAM_HEIGHT, s * 2.0);    
+    
+    // Ray direction
+    //const float FOV = 1.5; // Field of view
+    //vec3 rayDir = normalize(vec3(uv.x * FOV, uv.y * FOV, -1.0));
+    
+    vec2 mouse = iMouse.xy / iResolution.xy;
+    float deltaRot = mouse.x * PI * 2.0;
+
+    float D = 4.0;
+    float z = iGlobalTime * SPEED;
+    vec3 camPos = vec3( -D * cos(deltaRot), mouse.y * 4.0, z + -D * sin(deltaRot) );
+    vec3 camFow = vec3( 1.0 * cos(deltaRot), 0.0, 1.0 * sin(deltaRot) );
+    mat3 camMat = getCameraMatrix( camFow );
+    
+    float viewRatio = iResolution.y / iResolution.x;
+    uv.y *= viewRatio;
+
+    vec3 rayDir = camMat * normalize( vec3( uv, viewRatio * 1.5 ) );
+    
+    // Get colour for pixel
+    vec3 colour = render(camPos, rayDir);
+    
+    fragColor = vec4(colour, 1.0);
+}
+

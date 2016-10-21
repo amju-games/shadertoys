@@ -1,0 +1,234 @@
+//------------------------------------------------------------------------
+// Chinese dragon
+//------------------------------------------------------------------------
+// Jason Colman Aug 2016
+//------------------------------------------------------------------------
+
+
+#define PI 3.141592653589793
+
+// Initial value of t in ray equation p0 + t (p1 - p0)
+#define START_T 0.0
+
+// Once ray reaches this length, it won't hit anything in 
+//  the scene.
+#define TOO_FAR 10.0
+
+// If distance from point to a surface is <= this, we are 
+//  close enough to say we have hit it.
+#define CLOSE_ENOUGH 0.01
+
+// Max number of iterations in ray marching loop, will be
+//  interesting to find realistic value for this. Depends on
+//  number of objects in scene, no?
+// From a quick experiment, more than 100 makes no difference
+//  visually, for this example.
+#define MAX_ITERS 100
+
+#define LIGHT_DIR normalize(vec3(1.0, 0.8, 0.1))
+
+
+
+//------------------------------------------------------------------------
+// Standard distance to sphere function
+float distSphere(in vec3 pos, float radius) 
+{
+    return length(pos) - radius;
+}
+
+//------------------------------------------------------------------------
+// Box
+// From:
+// http://iquilezles.org/www/articles/distfunctions/distfunctions.htm
+float sdBox(in vec3 p, in vec3 b)
+{
+    vec3 d = abs(p) - b;
+    return min(max(d.x,max(d.y,d.z)),0.0) +
+         length(max(d,0.0));
+}
+
+//------------------------------------------------------------------------
+// Cylinder
+// From:
+// http://iquilezles.org/www/articles/distfunctions/distfunctions.htm
+float sdCappedCylinder( vec3 p, vec2 h )
+{
+  vec2 d = abs(vec2(length(p.xz),p.y)) - h;
+  return min(max(d.x,d.y),0.0) + length(max(d,0.0));
+}
+
+//------------------------------------------------------------------------
+// Difference between two objects... maybe not use this
+float subtract(float a, float b)
+{
+    return max(a, -b);
+}
+
+//------------------------------------------------------------------------
+vec2 calcDist(in vec3 pos) 
+{
+    // TODO fill in distance and material
+    
+    // Head - distorted box
+    vec3 boxSize = vec3(.2, 
+                        .1 * (sin(pos.x * 30.) * .2 + 1.), 
+                        .1 * (1. - pos.x * 2.));
+    return vec2(sdBox(pos, boxSize), 0);
+}
+
+//------------------------------------------------------------------------
+vec3 calcNormalAtPoint(vec3 pos) 
+{
+    float d = 0.001;
+    vec2 u = vec2(1.0, 0.0);
+    return normalize(
+        vec3(
+            calcDist(pos + u.xyy * d).x - calcDist(pos - u.xyy * d).x,
+            calcDist(pos + u.yxy * d).x - calcDist(pos - u.yxy * d).x,
+            calcDist(pos + u.yyx * d).x - calcDist(pos - u.yyx * d).x
+        )
+    );
+}
+
+//------------------------------------------------------------------------
+vec3 calcColour(in vec3 pos, in vec3 rayDir, int material)
+{
+    // Diffuse light    
+    vec3 normal = calcNormalAtPoint(pos);
+    float nDotL = min(max(0.0, dot(normal, LIGHT_DIR)) + 0.5, 1.0);
+
+    // TODO calc colour
+
+    if (material == 0) // Head
+    {
+        // Eye
+        const vec2 EYE_CENTRE = vec2(.1, .03);
+        const float EYE_RADIUS = .06;
+        const float EYE_RADIUS2 = .05;
+        const float EYE_RADIUS3 = .03;
+
+        vec2 xyPos = pos.xy * (2. * pos.x / pos.y * .1); // TODO distort into eye shape
+        float eyeD = length(xyPos - EYE_CENTRE); 
+        if (eyeD < EYE_RADIUS3)
+            return vec3(0., 0., 0.);
+        else if (eyeD < EYE_RADIUS2)
+            return vec3(1., 1., 1.) * nDotL;
+        if (eyeD < EYE_RADIUS)
+            return vec3(0., 0., 0.);
+
+        // Mouth
+        const float MOUTH_MIN_X = -10.;
+        const float MOUTH_MAX_X = 0.;
+        const float MOUTH_MIN_Y = -.03;
+        const float MOUTH_MAX_Y = .03;
+
+        if (pos.x > MOUTH_MIN_X && pos.x < MOUTH_MAX_X &&
+            pos.y > MOUTH_MIN_Y && pos.y < MOUTH_MAX_Y)
+        {
+            // Teeth
+            float x = mod(-pos.x, 0.1);
+            float y = mod(pos.y - .03, 0.1);
+            if (x > y)
+                return vec3(1., 1., 1.) * nDotL;
+
+            
+            return vec3(1., 0., 0.) * nDotL;
+        }
+            
+            
+        // Rest of head
+        return vec3(1., .5, 0.) * nDotL;
+    } 
+    
+}
+
+//------------------------------------------------------------------------
+vec3 colourAtInfinity()
+{
+    // TODO
+    
+    // Example
+    return vec3(0);
+}
+
+//------------------------------------------------------------------------
+// Raymarch until we hit something, or we realise we will find nothing.
+// Return colour of pixel.
+vec3 render(in vec3 eyePos, in vec3 rayDir)
+{
+    // t is distance along ray so far 
+    float t = START_T;
+    
+    vec2 distMat = vec2(0.0, 0.0);
+    
+    // Repeatedly find the closest distance to an object in the
+    //  scene, and add this to t. 
+    for( int i = 0; i < MAX_ITERS; i++ ) 
+    {
+        // Distance to closest object and its material ID
+        distMat = calcDist(eyePos + rayDir * t);
+        float dist = distMat.x; // x-component is the distance
+
+        if (dist > TOO_FAR)
+            return colourAtInfinity(); // ray has hit nothing, and never will 
+        
+        if (dist <= CLOSE_ENOUGH)
+            break; // ray has hit something
+
+        t += dist * 0.9; // advance by this distance and keep marching
+    }
+
+    // Final pos, which is on surface of an object in the scene
+    vec3 pos = eyePos + rayDir * t;    
+    
+    // Now we could use pos to get the normal, then do some 
+    //  lighting etc.
+    int material = int(distMat.y);
+    
+    return calcColour(pos, rayDir, material);    
+}
+
+//------------------------------------------------------------------------
+// camera matrix
+mat3 getCameraMatrix( vec3 camFow ) 
+{
+    vec3 forward = normalize( camFow );
+    vec3 up = normalize( vec3( 0.0, 1.0, 0.0 ) );
+    vec3 right = normalize( cross( up, forward ) );
+    
+    mat3 mat = mat3( right, up, forward );
+        
+    return mat;
+}
+
+//------------------------------------------------------------------------
+// Main function
+void mainImage(out vec4 fragColor, in vec2 fragCoord)
+{
+    // Get this pixel coord in range (-1..1)
+	vec2 uv = fragCoord.xy / iResolution.xy;
+    uv = uv * 2.0 - 1.0;
+
+    // Rotate camera in time with track curve, so we look at train
+    float deltaRot = PI - sin(iGlobalTime * 0.05) * PI;
+
+    float D = 1.0;
+    float y = 0.;//cos(iGlobalTime * 0.2) + 1.0;
+    float z = 0.; //iGlobalTime * SPEED;
+    vec3 camPos = vec3( -D * cos(deltaRot), y, z + -D * sin(deltaRot) );
+    vec3 camFow = vec3( 1.0 * cos(deltaRot), 0.0, 1.0 * sin(deltaRot) );
+    mat3 camMat = getCameraMatrix( camFow );
+    
+    float viewRatio = iResolution.y / iResolution.x;
+    uv.y *= viewRatio;
+
+    vec3 rayDir = camMat * normalize( vec3( uv, viewRatio * 1.5 ) );
+    
+    // Get colour for pixel
+    vec3 colour = render(camPos, rayDir);
+    
+    fragColor = vec4(colour, 1.0);
+}
+
+
+

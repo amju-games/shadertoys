@@ -1,0 +1,18 @@
+void mainImage( out vec4 fragColor, in vec2 fragCoord )
+{
+    vec2 uv = vec2(floor(fragCoord.x * .1 + 1.), floor(fragCoord.y * .1 + 1.)); 
+    fragColor = vec4(1.); 
+    
+    bool fizz = mod(uv.x, 3.) < .5;
+    bool buzz = mod(uv.y, 5.) < .5;
+    
+    if (fizz && buzz)
+        fragColor = vec4(1., 0., 1., 1.);
+    else if (fizz)
+        fragColor = vec4(1., 0., 0., 1.);
+    else if (buzz)
+        fragColor = vec4(0., 0., 1., 1.);
+    else if (abs(mod(uv.x, 2.) - mod(uv.y, 2.)) > .1)
+        fragColor = vec4(.8, 1., .8, 1.);
+}
+

@@ -1,0 +1,37 @@
+Oh no, WebGL crash!
+It's not the innards of edge() --  OH, could it be that edge is a reserved word?
+
+
+
+Max sprite size = 31 bits wide
+
+Should use 8x8 cells of pixels? - no, 1 column of 31-bit "bytes"
+
+Get pixel at (x, y) for frame, spriteID
+Want mirrored sprites for 2 directions
+Look left and right - randomly change top half of sprite?
+
+Sprite data: rows of 8-bit bytes, number of columns in each row is fixed for that sprite.
+
+Also need mask data?
+
+Arches: these must be done as 2 separate sprites, right? Painters algo won't work here!
+
+Need to draw sprites in z order, right?
+
+Factor out head sprite, also allows for head turning
+
+
+Enter a room: set size, which depends on vertical 'column' background sprites and extra wall sprites.
+When we enter room, hide wall sprites from previous room, and show new sprites for this room.
+
+Walk speed & anims: vary these, so wulf walks, stops, then continues.
+
+Change direction: mirror arch & wulf sprites (and walls?)
+Only one arch on screen at once? We possibly change dir after arch has gone off screen.
+
+Data:
+Need 2 intermediate frames from walk cycle.
+Head turn
+Need wall columns, (+function to stack them).
+

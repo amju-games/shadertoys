@@ -1,0 +1,34 @@
+  ..               .. 
+  .M..           ..M.
+   .MM...........MM.
+   .MMMM.MMMMM.MMM.
+    .MMMMMMMMMM.MM.
+    .MMMMMMMMMMM.M.
+     .MMMM..M..MM.
+     .MMMM.MMM.M.
+    .M.MMMMMMMMM.
+    .MMMMMMMMMMMM.
+    .MMMMM.MM.M.M.
+    .MMMMMM.MMMMM.
+   .M....MM.M...M.
+  .MMMMMM.M.M M..
+  .MMMMMMM...MMM.
+  .MMM.MMMMMM...M..
+  .MMM.MMMMMMMM.MMM.
+  .MMM.MMMMMMMM.MMMM.
+ .MMMM.MMMMMMMM. .MM.
+ .MMMM.MMMMMMMM. .MM.
+ .MMMMM.MMMMMMM.  .M.
+  ..MMMM..MMMMMM.  . 
+   ..MMMM.MMMMMM.
+...MM MMMM.MMMMM.
+MMMMMM..MM..MMMM.
+MMMMMM..MM...MMM.
+MM.... .M...MMM.
+MMMM..   .MMM...  
+..MMMM..  ..MMMM..
+  ..MMMM.   .MMMMM..
+    ...M.    ..MMMMM.
+               ..MMM.
+                 ..M.
+                   .
